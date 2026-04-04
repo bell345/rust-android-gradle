@@ -1,12 +1,14 @@
+import com.android.build.api.dsl.ApplicationExtension
+
 plugins {
-    id("com.android.application") version("8.7.3")
+    id("com.android.application") version("9.1.0")
     id("me.sigptr.rust-android")
 }
 
-android {
+extensions.configure<ApplicationExtension> {
     namespace = "com.nishtahir.androidrust"
     compileSdk = 35
-    ndkVersion = "27.2.12479018"
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.nishtahir.androidrust"
@@ -56,15 +58,4 @@ dependencies {
     implementation("com.android.support:appcompat-v7:28.0.0")
     implementation("com.android.support.constraint:constraint-layout:2.0.4")
     testImplementation("junit:junit:4.13.2")
-}
-
-afterEvaluate {
-    fun CharSequence.capitalized() =
-        toString().replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-
-    android.applicationVariants.forEach { variant ->
-        val productFlavor = variant.productFlavors.joinToString("") { it.name.capitalized() }
-        val buildType = variant.buildType.name.capitalized()
-        tasks["generate${productFlavor}${buildType}Assets"].dependsOn(tasks["cargoBuild"])
-    }
 }

@@ -1,12 +1,17 @@
 package com.nishtahir
 
-import com.android.build.gradle.*
-import org.gradle.api.DefaultTask
+import com.android.build.api.dsl.ApplicationExtension
+import com.android.build.api.dsl.CommonExtension
+import com.android.build.api.dsl.LibraryExtension
+import com.android.build.api.variant.AndroidComponents
+import com.android.build.api.variant.AndroidComponentsExtension
+import com.android.build.gradle.internal.tasks.factory.dependsOn
+import kotlinx.serialization.Serializable
 import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.file.DuplicatesStrategy
-import org.gradle.util.GradleVersion
+import org.gradle.api.tasks.TaskProvider
 import java.io.File
 import java.util.Properties
 
@@ -108,17 +113,18 @@ val toolchains = listOf(
                 "android/x86_64")
 )
 
-data class Ndk(val path: File, val version: String) {
+data class Ndk(val path: File, val version: String): java.io.Serializable {
     val versionMajor: Int
         get() = version.split(".").first().toInt()
 }
 
+@Serializable
 data class Toolchain(val platform: String,
                      val type: ToolchainType,
                      val target: String,
                      val compilerTriple: String,
                      val binutilsTriple: String,
-                     val folder: String) {
+                     val folder: String): java.io.Serializable {
     fun cc(apiLevel: Int): File =
         if (System.getProperty("os.name").startsWith("Windows")) {
             if (type == ToolchainType.ANDROID_PREBUILT) {
@@ -162,164 +168,152 @@ data class Toolchain(val platform: String,
 @Suppress("unused")
 open class RustAndroidPlugin : Plugin<Project> {
     internal lateinit var cargoExtension: CargoExtension
+    internal var generateToolchainsTask: TaskProvider<GenerateToolchainsTask>? = null
+    internal lateinit var generateLinkerWrapperTask: TaskProvider<GenerateLinkerWrapperTask>
+    internal lateinit var cargoBuildTask: TaskProvider<CargoBuildTask>
+    internal lateinit var targetBuildTasks: Map<String, TaskProvider<CargoBuildTargetTask>>
 
-    override fun apply(project: Project) {
-        with(project) {
-            cargoExtension = extensions.create("cargo", CargoExtension::class.java)
+    override fun apply(project: Project) = with(project) {
+        val android = extensions.findByType(ApplicationExtension::class.java)
+            ?: extensions.findByType(LibraryExtension::class.java)
+            ?: throw GradleException("Neither ApplicationExtension or LibraryExtension found")
+        val androidComponents = extensions[AndroidComponentsExtension::class]
+        cargoExtension = extensions.create("cargo", CargoExtension::class.java)
+        cargoExtension.localProperties = Properties().maybeLoadFromFile(project.rootDir, "local.properties")
 
-            afterEvaluate {
-                plugins.all {
-                    when (it) {
-                        is AppPlugin -> configurePlugin<AppExtension>(this)
-                        is LibraryPlugin -> configurePlugin<LibraryExtension>(this)
-                    }
-                }
+        androidComponents.finalizeDsl {
+            initCargoExtensionProperties(project, android)
+            createCommonTasks(project)
+            createTargetBuildTasks(project, getNdk(androidComponents))
+        }
+
+        with(androidComponents) {
+            onVariants(selector().withBuildType("main")) { variant ->
+                variant.sources.jniLibs?.addGeneratedSourceDirectory(cargoBuildTask,
+                    CargoBuildTask::jniOutputDirectory)
             }
-
+            onVariants(selector().withBuildType("test")) { variant ->
+                variant.sources.resources?.addGeneratedSourceDirectory(cargoBuildTask,
+                    CargoBuildTask::testOutputDirectory)
+            }
         }
     }
 
-    private inline fun <reified T : BaseExtension> configurePlugin(project: Project) = with(project) {
-        cargoExtension.localProperties = Properties()
+    private fun initCargoExtensionProperties(project: Project, android: CommonExtension) = with(cargoExtension) {
 
-        val localPropertiesFile = File(project.rootDir, "local.properties")
-        if (localPropertiesFile.exists()) {
-            cargoExtension.localProperties.load(localPropertiesFile.inputStream())
-        }
-
-        if (cargoExtension.module == null) {
+        if (module == null) {
             throw GradleException("module cannot be null")
         }
 
-        if (cargoExtension.libname == null) {
+        if (libname == null) {
             throw GradleException("libname cannot be null")
         }
 
         // Allow to set targets, including per-project, in local.properties.
-        val localTargets: String? =
-            cargoExtension.localProperties.getProperty("rust.targets.${project.name}") ?:
-            cargoExtension.localProperties.getProperty("rust.targets")
-        if (localTargets != null) {
-            cargoExtension.targets = localTargets.split(',').map { it.trim() }
+        localProperties.let {
+            it.getProperty("rust.targets.${project.name}") ?: it.getProperty("rust.targets")
+        }?.let { localTargets ->
+            targets = localTargets.split(',').map { it.trim() }
         }
 
-        if (cargoExtension.targets == null) {
+        if (targets == null) {
             throw GradleException("targets cannot be null")
         }
 
-        // Ensure that an API level is specified for all targets
-        val apiLevel = cargoExtension.apiLevel
-        if (cargoExtension.apiLevels.isNotEmpty()) {
+        if (apiLevels.isNotEmpty()) {
             if (apiLevel != null) {
                 throw GradleException("Cannot set both `apiLevel` and `apiLevels`")
             }
         } else {
-            val default = apiLevel ?: extensions[T::class].defaultConfig.minSdkVersion!!.apiLevel
-            cargoExtension.apiLevels = cargoExtension.targets!!.associateWith { default }
+            val default = apiLevel ?: android.defaultConfig.minSdk ?: throw GradleException("minSdk not specified in defaultConfig")
+            apiLevels = targets!!.associateWith { default }
         }
-        val missingApiLevelTargets = cargoExtension.targets!!.toSet().minus(
-            cargoExtension.apiLevels.keys)
+
+        val missingApiLevelTargets = targets!!.toSet().minus(apiLevels.keys)
         if (missingApiLevelTargets.isNotEmpty()) {
             throw GradleException("`apiLevels` missing entries for: $missingApiLevelTargets")
         }
 
-        extensions[T::class].apply {
-            val buildDir by layout.buildDirectory
-            sourceSets.getByName("main").jniLibs.srcDir(File("$buildDir/rustJniLibs/android"))
-            sourceSets.getByName("test").resources.srcDir(File("$buildDir/rustJniLibs/desktop"))
+        val oldApiLevelTargets = apiLevels.filterValues { it < 21 }
+        if (oldApiLevelTargets.isNotEmpty()) {
+            throw GradleException("`apiLevels` contains unsupported API levels < 21: $oldApiLevelTargets")
         }
+    }
 
-        // Determine the NDK version, if present
-        val ndk = extensions[T::class].ndkDirectory.let {
-            val ndkSourceProperties = Properties()
-            val ndkSourcePropertiesFile = File(it, "source.properties")
-            if (ndkSourcePropertiesFile.exists()) {
-                ndkSourceProperties.load(ndkSourcePropertiesFile.inputStream())
-            }
-            val ndkVersion = ndkSourceProperties.getProperty("Pkg.Revision", "0.0")
-            Ndk(path = it, version = ndkVersion)
-        }
+    private fun createCommonTasks(project: Project) = with(cargoExtension) {
+        val usePrebuilt = localProperties.getProperty("rust.prebuiltToolchains")?.equals("true") ?:
+            prebuiltToolchains ?: true
 
-        // Determine whether to use prebuilt or generated toolchains
-        val usePrebuilt =
-            cargoExtension.localProperties.getProperty("rust.prebuiltToolchains")?.equals("true") ?:
-            cargoExtension.prebuiltToolchains ?:
-            (ndk.versionMajor >= 19)
-
-        if (usePrebuilt && ndk.versionMajor < 19) {
-            throw GradleException("usePrebuilt = true requires NDK version 19+")
-        }
-
-        val generateToolchain = if (!usePrebuilt) {
-            tasks.maybeCreate("generateToolchains",
-                    GenerateToolchainsTask::class.java).apply {
+        if (!usePrebuilt) {
+            generateToolchainsTask = project.tasks.register<GenerateToolchainsTask>("generateToolchains") {
                 group = RUST_TASK_GROUP
                 description = "Generate standard toolchain for given architectures"
             }
-        } else {
-            null
         }
 
-        // Fish linker wrapper scripts from our Java resources.
-        val generateLinkerWrapper = rootProject.tasks.maybeCreate("generateLinkerWrapper", GenerateLinkerWrapperTask::class.java).apply {
+        val rootBuildDir by project.rootBuildDirectory()
+        val currentLocation = File(this::class.java.protectionDomain.codeSource.location.toURI()).path
+        generateLinkerWrapperTask = project.rootProject.tasks.maybeRegister<GenerateLinkerWrapperTask>("generateLinkerWrapper") {
             group = RUST_TASK_GROUP
             description = "Generate shared linker wrapper script"
-        }
 
-        val rootBuildDir by rootBuildDirectory()
-        generateLinkerWrapper.apply {
-            // From https://stackoverflow.com/a/320595.
-            from(rootProject.zipTree(File(RustAndroidPlugin::class.java.protectionDomain.codeSource.location.toURI()).path))
+            from(project.rootProject.zipTree(currentLocation))
             include("**/linker-wrapper*")
             into(File(rootBuildDir, "linker-wrapper"))
             eachFile {
                 it.path = it.path.replaceFirst("com/nishtahir", "")
             }
-            if (GradleVersion.current() >= GradleVersion.version("8.3")) {
-                filePermissions {
-                    it.unix("755")
-                }
-            } else {
-                @Suppress("DEPRECATION")
-                fileMode = "0755".toInt(8)
+            filePermissions {
+                it.unix("755")
             }
             includeEmptyDirs = false
             duplicatesStrategy = DuplicatesStrategy.EXCLUDE
         }
 
-        val buildTask = tasks.maybeCreate("cargoBuild",
-                DefaultTask::class.java).apply {
+        cargoBuildTask = project.tasks.register<CargoBuildTask>("cargoBuild") {
             group = RUST_TASK_GROUP
             description = "Build library (all targets)"
         }
+    }
 
-        cargoExtension.targets!!.forEach { target ->
-            val theToolchain = toolchains
-                .filter {
-                    if (usePrebuilt) {
-                        it.type != ToolchainType.ANDROID_GENERATED
-                    } else {
-                        it.type != ToolchainType.ANDROID_PREBUILT
-                    }
-                }
-                .find { it.platform == target }
+    private fun createTargetBuildTasks(project: Project, theNdk: Ndk) = with(cargoExtension) {
+        val excludeType = if (generateToolchainsTask != null) {
+            ToolchainType.ANDROID_PREBUILT
+        } else {
+            ToolchainType.ANDROID_GENERATED
+        }
+        targetBuildTasks = targets!!.associateWith { target ->
+            val theToolchain = toolchains.filterNot { it.type == excludeType }.find { it.platform == target }
             if (theToolchain == null) {
                 throw GradleException("Target $target is not recognized (recognized targets: ${toolchains.map { it.platform }.sorted()}).  Check `local.properties` and `build.gradle`.")
             }
 
-            val targetBuildTask = tasks.maybeCreate("cargoBuild${target.capitalized()}",
-                    CargoBuildTask::class.java).apply {
+            val task = project.tasks.register<CargoBuildTargetTask>("cargoBuild${target.capitalized()}") {
                 group = RUST_TASK_GROUP
                 description = "Build library ($target)"
                 toolchain.set(theToolchain)
-                this.ndk.set(ndk)
+                ndk.set(theNdk)
+                generateToolchainsTask?.let {
+                    dependsOn(it)
+                }
+                dependsOn(generateLinkerWrapperTask)
             }
-
-            if (!usePrebuilt) {
-                targetBuildTask.dependsOn(generateToolchain!!)
-            }
-            targetBuildTask.dependsOn(generateLinkerWrapper)
-            buildTask.dependsOn(targetBuildTask)
+            cargoBuildTask.dependsOn(task)
+            task
         }
+    }
+
+    private fun getNdk(androidComponents: AndroidComponents): Ndk {
+        val ndkDir by androidComponents.sdkComponents.ndkDirectory
+        val ndkPath = ndkDir.asFile
+        val ndkVersion = Properties()
+            .maybeLoadFromFile(ndkPath, "source.properties")
+            .getProperty("Pkg.Revision", "0.0")
+
+        val ndk = Ndk(path = ndkPath, version = ndkVersion)
+        if (ndk.versionMajor < 19) {
+            throw GradleException("NDK version < 19 not supported")
+        }
+        return ndk
     }
 }

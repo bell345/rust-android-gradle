@@ -15,12 +15,19 @@ to focus on the upcoming Gradle 9.0 release, which removes several APIs that wer
 
 ## Setup
 
-Ensure that your `settings.gradle.kts` includes the `gradlePluginPortal()` repository:
+Ensure that your `settings.gradle.kts` includes the private repository:
 
 ```kotlin
 pluginManagement {
    repositories {
       /* other repos */
+      maven {
+          url = uri("https://maven.pkg.github.com/bell345/rust-android-gradle")
+          credentials {
+              username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_USER")
+              password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
+          }
+      }
       gradlePluginPortal()
    }
 }
@@ -30,7 +37,7 @@ In your project's `build.gradle.kts`, declare the `rust-android-gradle` plugin i
 
 ```kotlin
 plugins {
-    id("me.sigptr.rust-android") version("1.0.0")
+    id("me.sigptr.rust-android") version("0.10.0")
 }
 
 cargo {
@@ -44,22 +51,6 @@ Install the Rust targets corresponding to your `cargo.targets`, e.g. in this cas
 ```sh
 rustup target add x86_64-linux-android
 rustup target add aarch64-linux-android
-```
-
-Now you need to make sure that the `cargoBuild` task is a dependency of your `generate*Assets` tasks through the following segment in your `build.gradle.kts`:
-
-```kotlin
-afterEvaluate {
-   fun CharSequence.capitalized() =
-      toString().replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-
-   /* replace applicationVariants with libraryVariants if compiling an Android library */
-   android.applicationVariants.forEach { variant ->
-      val productFlavor = variant.productFlavors.joinToString("") { it.name.capitalized() }
-      val buildType = variant.buildType.name.capitalized()
-      tasks["generate${productFlavor}${buildType}Assets"].dependsOn(tasks["cargoBuild"])
-   }
-}
 ```
 
 ## Supported targets

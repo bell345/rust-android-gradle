@@ -35,8 +35,6 @@ object TestVersions {
             it.key.major == androidVersion.major && it.key.minor == androidVersion.minor
         }?.value?.maxOrNull()!!
 
-    val latestKotlinVersion = VersionNumber.parse("1.9.25")
-
     private fun getLatestVersionForAndroid(version: String): VersionNumber {
         val number = VersionNumber.parse(version)
         return allCandidateTestVersions.keys

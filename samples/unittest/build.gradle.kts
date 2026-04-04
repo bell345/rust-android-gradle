@@ -1,12 +1,13 @@
+import com.android.build.api.dsl.ApplicationExtension
 plugins {
-    id("com.android.application") version("8.7.3")
+    id("com.android.application") version("9.1.0")
     id("me.sigptr.rust-android")
 }
 
-android {
+extensions.configure<ApplicationExtension> {
     namespace = "com.nishtahir.androidrust"
     compileSdk = 35
-    ndkVersion = "27.2.12479018"
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.nishtahir.androidrust"
@@ -20,11 +21,7 @@ android {
     }
 
     sourceSets {
-        getByName("test") {
-            resources {
-                srcDir(layout.buildDirectory.dir("rustJniLibs/desktop"))
-            }
-        }
+        getByName("test")
         getByName("main")
     }
 }

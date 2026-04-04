@@ -2,8 +2,8 @@ package com.nishtahir
 
 import io.kotest.core.annotation.EnabledIf
 import io.kotest.core.spec.style.FunSpec
-import io.kotest.datatest.WithDataTestName
 import io.kotest.datatest.withData
+import io.kotest.engine.names.WithDataTestName
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
 import org.gradle.testkit.runner.TaskOutcome
@@ -20,8 +20,6 @@ data class BuildTestData(
 
 @EnabledIf(MultiVersionCondition::class)
 class CargoBuildTest : FunSpec({
-    val kotlinVersion = TestVersions.latestKotlinVersion
-
     withData(
         TestVersions.allCandidateTestVersions.flatMap { entry ->
             entry.value.map { BuildTestData(entry.key, it) }
@@ -33,7 +31,6 @@ class CargoBuildTest : FunSpec({
         SimpleAndroidApp(
             projectDir = projectDir,
             androidVersion = androidVersion,
-            kotlinVersion = kotlinVersion
         ).writeProject()
 
         SimpleCargoProject(

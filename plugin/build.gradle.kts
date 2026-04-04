@@ -28,15 +28,14 @@ val versionProperties = Properties().apply {
     load(FileInputStream("${rootProject.projectDir}/version.properties"))
 }
 
-group = "me.sigptr"
+group = "me.sigptr.rust-android"
 version = versionProperties["version"]!!
 
 val isCI = (System.getenv("CI") ?: "false").toBoolean()
 
 // Maps supported Android plugin versions to the versions of Gradle that support it
 val supportedVersions = mapOf(
-    "8.7.3" to listOf("8.9.0", "8.10.0"),
-    "8.6.1" to listOf("8.7.0"),
+    "9.1.0" to listOf("9.3.1"),
 )
 
 val localRepo = file("${layout.buildDirectory.get()}/local-repo")
@@ -53,17 +52,16 @@ dependencies {
 
     testImplementation(gradleTestKit())
     testImplementation(libs.android.gradlePlugin)
-    testImplementation(libs.guava)
 
-    testImplementation(libs.junit.jupiter.api)
+    testImplementation(platform(libs.junit.bom))
+    testImplementation(libs.junit.jupiter)
     testImplementation(libs.kotest.runner.junit5)
     testImplementation(libs.kotest.assertions.core)
-    testImplementation(libs.kotest.framework.datatest)
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 
 kotlin {
-    jvmToolchain(11)
+    jvmToolchain(17)
 }
 
 val generatedResources = layout.buildDirectory.dir("generated-resources/main")

@@ -1,7 +1,7 @@
 package com.nishtahir
 
 import io.kotest.core.spec.style.FunSpec
-import io.kotest.datatest.WithDataTestName
+import io.kotest.engine.names.WithDataTestName
 import io.kotest.datatest.withData
 import io.kotest.matchers.should
 import io.kotest.matchers.shouldBe
@@ -19,7 +19,6 @@ data class TargetTestData(
 class CargoTargetTest : FunSpec({
     val androidVersion = TestVersions.latestAndroidVersionForCurrentJDK
     val gradleVersion = TestVersions.latestSupportedGradleVersionFor(androidVersion)
-    val kotlinVersion = TestVersions.latestKotlinVersion
 
     withData(listOf(
         // Sadly, cross-compiling to macOS targets fails at this time: see
@@ -36,7 +35,6 @@ class CargoTargetTest : FunSpec({
         SimpleAndroidApp(
             projectDir = projectDir,
             androidVersion = androidVersion,
-            kotlinVersion = kotlinVersion
         ).writeProject()
 
         SimpleCargoProject(

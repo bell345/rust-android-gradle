@@ -150,11 +150,11 @@ data class VersionNumber(
         fun scanDigit(): Int {
             val start = pos
             while (hasDigit()) { pos += 1 }
-            return str.substring(start..<pos).toInt()
+            return str.substring(start, pos).toInt()
         }
 
         fun isEnd(): Boolean = pos == str.length
         fun skipSeparator() { pos += 1 }
-        fun remainder(): String = str.substring(pos..<str.length)
+        fun remainder(): String = str.substring(pos, str.length)
     }
 }

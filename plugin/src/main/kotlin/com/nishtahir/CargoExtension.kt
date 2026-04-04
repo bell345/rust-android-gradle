@@ -46,9 +46,6 @@ open class CargoExtension {
     var extraCargoBuildArguments: List<String>? = null
     var generateBuildId: Boolean = false
 
-    // It would be nice to use a receiver here, but there are problems interoperating with Groovy
-    // and Kotlin that are just not worth working out.  Another JVM language, yet another dynamic
-    // invoke solution :(
     var exec: ((ExecSpec, Toolchain) -> Unit)? = null
 
     var featureSpec: FeatureSpec = FeatureSpec()
@@ -58,23 +55,16 @@ open class CargoExtension {
         action.execute(featureSpec)
     }
 
-    val toolchainDirectory: File
-        get() {
-            // Share a single toolchain directory, if one is configured.  Prefer "local.properties"
-            // to "ANDROID_NDK_TOOLCHAIN_DIR" to "$TMP/rust-android-ndk-toolchains".
-            val local: String? = localProperties.getProperty("rust.androidNdkToolchainDir")
-            if (local != null) {
-                return File(local).absoluteFile
-            }
-
-            val globalDir: String? = System.getenv("ANDROID_NDK_TOOLCHAIN_DIR")
-            if (globalDir != null) {
-                return File(globalDir).absoluteFile
-            }
-
-            val defaultDir = File(System.getProperty("java.io.tmpdir"), "rust-android-ndk-toolchains")
-            return defaultDir.absoluteFile
+    val toolchainDirectory: File get() {
+        // Share a single toolchain directory, if one is configured.  Prefer "local.properties"
+        // to "ANDROID_NDK_TOOLCHAIN_DIR" to "$TMP/rust-android-ndk-toolchains".
+        val propDir = getProperty("rust.androidNdkToolchainDir", "ANDROID_NDK_TOOLCHAIN_DIR")
+        if (propDir != null) {
+            return File(propDir).absoluteFile
         }
+        val defaultDir = File(System.getProperty("java.io.tmpdir"), "rust-android-ndk-toolchains")
+        return defaultDir.absoluteFile
+    }
 
     var cargoCommand: String = ""
         get() {
@@ -107,7 +97,32 @@ open class CargoExtension {
             }
         }
 
-    fun getFlagProperty(camelCaseName: String, snakeCaseName: String, ifUnset: Boolean): Boolean {
+    val autoConfigureClangSys: Boolean get() =
+        // Set CLANG_PATH in the environment, so that bindgen (or anything
+        // else using clang-sys in a build.rs) works properly, and doesn't
+        // use host headers and such.
+        getFlagProperty(
+            "rust.autoConfigureClangSys",
+            "RUST_ANDROID_GRADLE_AUTO_CONFIGURE_CLANG_SYS",
+            // By default, only do this for non-desktop platforms. If we're
+            // building for desktop, things should work out of the box.
+            true
+        )
+
+    val cargoTargetDir: File get() =
+        // CARGO_TARGET_DIR can be used to force the use of a global, shared target directory
+        // across all rust projects on a machine. Use it if it's set, otherwise use the
+        // configured `targetDirectory` value, and fall back to `${module}/target`.
+        //
+        // We also allow this to be specified in `local.properties`, not because this is
+        // something you should ever need to do currently, but we don't want it to ruin anyone's
+        // day if it turns out we're wrong about that.
+        File(getProperty("rust.cargoTargetDir", "CARGO_TARGET_DIR")
+            ?: targetDirectory
+            ?: "${module}/target")
+
+
+    internal fun getFlagProperty(camelCaseName: String, snakeCaseName: String, ifUnset: Boolean): Boolean {
         val propVal = getProperty(camelCaseName, snakeCaseName)
         if (propVal == "1" || propVal == "true") {
             return true
@@ -121,15 +136,6 @@ open class CargoExtension {
         throw GradleException("Illegal value for property \"$camelCaseName\" / \"$snakeCaseName\". Must be 0/1/true/false if set")
     }
 
-    internal fun getProperty(camelCaseName: String, snakeCaseName: String): String? {
-        val local: String? = localProperties.getProperty(camelCaseName)
-        if (local != null) {
-            return local
-        }
-        val global: String? = System.getenv(snakeCaseName)
-        if (global != null) {
-            return global
-        }
-        return null
-    }
+    internal fun getProperty(propertyName: String, envVarName: String): String? =
+        localProperties.getProperty(propertyName) ?: System.getenv(envVarName)
 }

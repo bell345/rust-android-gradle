@@ -6,12 +6,11 @@ class SimpleAndroidApp(
     private val projectDir: File,
     private val androidVersion: VersionNumber = Versions.latestAndroidVersion(),
     private val ndkVersionOverride: VersionNumber? = null,
-    private val kotlinVersion: VersionNumber,
     private val kaptWorkersEnabled: Boolean = true
 ) {
     private val ndkVersion = ndkVersionOverride
         ?: if (androidVersion >= android("3.4.0")) {
-            VersionNumber.parse("26.3.11579264")
+            VersionNumber.parse("28.2.13676358")
         } else {
             null
         }
@@ -111,7 +110,6 @@ class SimpleAndroidApp(
 
     private fun subprojectConfiguration(androidPlugin: String) = /*language=kotlin*/ """
         plugins {
-            id("org.jetbrains.kotlin.android") version("$kotlinVersion")
             id("$androidPlugin") version("$androidVersion")
             id("me.sigptr.rust-android") version("${Versions.PLUGIN_VERSION}")
         }
